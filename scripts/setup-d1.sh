@@ -13,33 +13,23 @@ fi
 APP_NAME=$(grep -o '"name": *"[^"]*"' "$CONFIG_FILE" | head -n1 | cut -d'"' -f4 || echo "manyfold-app")
 DB_NAME="${2:-${APP_NAME}-db}"
 
-echo "==> Creating Cloudflare D1 database: $DB_NAME ..."
+echo "==> Ensuring Cloudflare D1 database: $DB_NAME ..."
 
-# Run wrangler d1 create and capture output
-D1_OUTPUT=$(npx --yes wrangler d1 create "$DB_NAME" --json 2>&1 || true)
+# 1. Check if database already exists
+DB_ID=$(npx --yes wrangler d1 list 2>/dev/null | grep "$DB_NAME" | awk -F'│' '{print $2}' | tr -d ' ' || true)
 
-# Extract database_id
-DB_ID=$(echo "$D1_OUTPUT" | grep -o '"database_id": *"[^"]*"' | head -n1 | cut -d'"' -f4 || echo "")
-
+# 2. If not found, create it (answering 'n' to auto-patch so we preserve our own schema & comments)
 if [ -z "$DB_ID" ]; then
-  # Check if database already exists
-  echo "[!] Failed to create or database already exists. Checking existing D1 databases..."
-  LIST_OUTPUT=$(npx --yes wrangler d1 list --json 2>/dev/null || echo "[]")
-  DB_ID=$(echo "$LIST_OUTPUT" | node -e '
-    const fs = require("fs");
-    const input = fs.readFileSync(0, "utf-8");
-    try {
-      const dbs = JSON.parse(input);
-      const target = dbs.find(d => d.name === process.argv[1]);
-      if (target) process.stdout.write(target.uuid || target.database_id || "");
-    } catch {}
-  ' "$DB_NAME")
+  echo "[+] Creating new D1 database $DB_NAME..."
+  CREATE_OUT=$(echo "n" | npx --yes wrangler d1 create "$DB_NAME" 2>&1 || true)
+  DB_ID=$(echo "$CREATE_OUT" | grep -o '"database_id": *"[^"]*"' | head -n1 | cut -d'"' -f4 || true)
+  if [ -z "$DB_ID" ]; then
+    DB_ID=$(npx --yes wrangler d1 list 2>/dev/null | grep "$DB_NAME" | awk -F'│' '{print $2}' | tr -d ' ' || true)
+  fi
 fi
 
 if [ -z "$DB_ID" ]; then
   echo "[-] Could not determine database_id for $DB_NAME."
-  echo "Wrangler output:"
-  echo "$D1_OUTPUT"
   exit 1
 fi
 
